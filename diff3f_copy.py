@@ -63,7 +63,6 @@ def get_features_per_vertex(
     pipe,
     dino_model,
     mesh,
-    image,
     prompt,
     num_views=100,
     H=512,
@@ -76,6 +75,7 @@ def get_features_per_vertex(
     return_image=True,
     bq=True,
     prompts_list=None,
+    real_world_image=None,  # New argument for real-world image
 ):
     t1 = time()
     if mesh_vertices is None:
@@ -84,7 +84,7 @@ def get_features_per_vertex(
         samples = random.sample(range(len(mesh_vertices)), 10000)
         maximal_distance = torch.cdist(mesh_vertices[samples], mesh_vertices[samples]).max()
     else:
-        maximal_distance = torch.cdist(mesh_vertices, mesh_vertices).max()  # .cpu()
+        maximal_distance = torch.cdist(mesh_vertices, mesh_vertices).max()
     ball_drop_radius = maximal_distance * tolerance
     batched_renderings, normal_batched_renderings, camera, depth = batch_render(
         device, mesh, mesh.verts_list()[0], num_views, H, W, use_normal_map
@@ -100,8 +100,27 @@ def get_features_per_vertex(
     normal_map_input = None
     depth = depth.cpu()
     torch.cuda.empty_cache()
-    ft_per_vertex = torch.zeros((len(mesh_vertices), FEATURE_DIMS)).half()  # .to(device)
-    ft_per_vertex_count = torch.zeros((len(mesh_vertices), 1)).half()  # .to(device)
+    ft_per_vertex = torch.zeros((len(mesh_vertices), FEATURE_DIMS)).half()
+    ft_per_vertex_count = torch.zeros((len(mesh_vertices), 1)).half()
+
+    # Compute features for the real-world image
+    if real_world_image is not None:
+        print(real_world_image.shape)
+        real_world_image_tensor = torch.tensor(real_world_image).permute(2, 0, 1).to(device) / 255.0
+        real_world_dino_features = get_dino_features(device, dino_model, real_world_image_tensor, grid)
+        real_world_diffusion_features = add_texture_to_render(
+            pipe,
+            real_world_image,
+            None,  # No depth map for real-world image
+            prompt,
+            normal_map_input=None,
+            use_latent=use_latent,
+            num_images_per_prompt=1,
+            return_image=False
+        )[0].unsqueeze(0).to(device)
+        real_world_diffusion_features = torch.nn.functional.normalize(real_world_diffusion_features, dim=1)
+        real_world_dino_features = torch.nn.functional.normalize(real_world_dino_features, dim=1)
+
     for idx in tqdm(range(len(batched_renderings))):
         dp = depth[idx].flatten().unsqueeze(1)
         xy_depth = torch.cat((pixel_coords, dp), dim=1)
@@ -110,7 +129,7 @@ def get_features_per_vertex(
         world_coords = (
             camera[idx].unproject_points(
                 xy_depth, world_coordinates=True, from_ndc=True
-            )  # .cpu()
+            )
         ).to(device)
         diffusion_input_img = (
             batched_renderings[idx, :, :, :3].cpu().numpy() * 255
@@ -133,18 +152,27 @@ def get_features_per_vertex(
         aligned_dino_features = get_dino_features(device, dino_model, diffusion_output[1][0], grid)
         aligned_features = None
         with torch.no_grad():
-            ft = torch.nn.Upsample(size=(H,W), mode="bilinear")(diffusion_output[0].unsqueeze(0)).to(device)
+            ft = torch.nn.Upsample(size=(H, W), mode="bilinear")(diffusion_output[0].unsqueeze(0)).to(device)
             ft_dim = ft.size(1)
             aligned_features = torch.nn.functional.grid_sample(
                 ft, grid, align_corners=False
             ).reshape(1, ft_dim, -1)
             aligned_features = torch.nn.functional.normalize(aligned_features, dim=1)
-        # this is feature per pixel in the grid
-        aligned_features = torch.hstack([aligned_features*0.5, aligned_dino_features*0.5])
+        aligned_features = torch.hstack([aligned_features * 0.5, aligned_dino_features * 0.5])
         features_per_pixel = aligned_features[0, :, indices].cpu()
-        
-        # TODO: take real world image pixel features
-        # map pixel to vertex on mesh
+
+        # Compute cosine similarity with real-world image features
+        if real_world_image is not None:
+            cosine_similarity_dino = torch.nn.functional.cosine_similarity(
+                real_world_dino_features, aligned_dino_features, dim=1
+            )
+            cosine_similarity_diffusion = torch.nn.functional.cosine_similarity(
+                real_world_diffusion_features, aligned_features[:, :FEATURE_DIMS], dim=1
+            )
+            print("Cosine similarity (DINO):", cosine_similarity_dino.mean().item())
+            print("Cosine similarity (Diffusion):", cosine_similarity_diffusion.mean().item())
+
+        # Map pixel to vertex on mesh
         if bq:
             queried_indices = (
                 ball_query(
@@ -165,7 +193,7 @@ def get_features_per_vertex(
             ).T
         else:
             distances = torch.cdist(
-            world_coords, mesh_vertices, p=2
+                world_coords, mesh_vertices, p=2
             )
             closest_vertex_indices = torch.argmin(distances, dim=1).cpu()
             ft_per_vertex[closest_vertex_indices] += features_per_pixel.T
@@ -176,7 +204,6 @@ def get_features_per_vertex(
     missing_features = len(ft_per_vertex_count[ft_per_vertex_count == 0])
     print("Number of missing features: ", missing_features)
     print("Copied features from nearest vertices")
-
     if missing_features > 0:
         filled_indices = ft_per_vertex_count[:, 0] != 0
         missing_indices = ft_per_vertex_count[:, 0] == 0

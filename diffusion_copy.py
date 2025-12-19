@@ -60,8 +60,9 @@ def sketch(img):
     return rgb
 
 
-def rgb2normalmap(normal_map):
-    normal_map = normal_map[:,:,0,:3].numpy()
+def rgb2normalmap(normal_map,ply=False):
+    if not ply: normal_map = normal_map[:,:,0,:3].numpy()
+    else : normal_map = normal_map[:,:,:3].numpy()
     min_value = np.min(normal_map)
     max_value = np.max(normal_map)
     normalized_normal_map = np.where(normal_map != 0, (normal_map - min_value) / (max_value - min_value), 0)
@@ -124,14 +125,15 @@ def run_diffusion(
     normal_map_input=None,
     use_latent=False,
     num_images_per_prompt=1,
-    return_image=False
+    return_image=False,
+    ply=False
 ):
     if depth_map is not None:
         depth_map = process_depth_map(depth_map)
     # canny = Image.fromarray(np.uint8(rgb2canny(input_image)))
     control_image = [depth_map]
     if normal_map_input is not None:
-        normal_map =  Image.fromarray(rgb2normalmap(normal_map_input))
+        normal_map =  Image.fromarray(rgb2normalmap(normal_map_input,ply=ply))
         control_image.append(normal_map)
     generator = torch.manual_seed(60)
     pos_prompt = f"{prompt},best quality,highly detailed,photorealistic,photo"
@@ -156,8 +158,8 @@ def run_diffusion(
 
 
 def add_texture_to_render(
-    pipe, input_image, depth_map, prompt, normal_map_input=None, use_latent=False, num_images_per_prompt=1, return_image=False
+    pipe, input_image, depth_map, prompt, normal_map_input=None, use_latent=False, num_images_per_prompt=1, return_image=False,ply=False
 ):
     return run_diffusion(
-        pipe, input_image, depth_map, prompt, normal_map_input, use_latent=use_latent, num_images_per_prompt=num_images_per_prompt,return_image=return_image
+        pipe, input_image, depth_map, prompt, normal_map_input, use_latent=use_latent, num_images_per_prompt=num_images_per_prompt,return_image=return_image,ply=ply
     )

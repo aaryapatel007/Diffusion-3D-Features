@@ -2,7 +2,7 @@ import torch
 import numbers
 import numpy as np
 import argparse
-from pytorch3d.structures import Meshes
+from pytorch3d.structures import Meshes, Pointclouds
 from pytorch3d.renderer import Textures
 from scipy.optimize import linear_sum_assignment
 from tqdm import tqdm
@@ -30,6 +30,20 @@ def plot_mesh(myMesh,cmap=None):
 def double_plot(myMesh1,myMesh2,cmap1=None,cmap2=None):
     d = mp.subplot(myMesh1.vert, myMesh1.face, c=cmap1, s=[2, 2, 0])
     mp.subplot(myMesh2.vert, myMesh2.face, c=cmap2, s=[2, 2, 1], data=d)
+
+def double_plot_mesh_and_pointcloud(myMesh1, myPointCloud2, cmap1=None, cmap2=None):
+    """
+    Plots a mesh and a point cloud side-by-side.
+    myMesh1: The mesh object (e.g., MeshContainer).
+    myPointCloud2: The point cloud object (e.g., MeshContainer from a .ply file).
+    cmap1: Color map for the mesh.
+    cmap2: Color map for the point cloud.
+    """
+    # Plot the mesh in the first subplot
+    d = mp.subplot(myMesh1.vert, myMesh1.face, c=cmap1, s=[2, 2, 0])
+    
+    # Plot the point cloud in the second subplot (note: no 'face' argument)
+    mp.subplot(myPointCloud2.vert, c=cmap2, s=[2, 2, 1], data=d)
 
 def get_colors(vertices):
     min_coord,max_coord = np.min(vertices,axis=0,keepdims=True),np.max(vertices,axis=0,keepdims=True)
@@ -94,6 +108,13 @@ def convert_mesh_container_to_torch_mesh(tm, device, is_tosca=True):
     mesh = Meshes(verts=[verts_1], faces=[faces_1], textures=textures)
     mesh = mesh.to(device)
     return mesh
+
+def convert_pointcloud_to_torch_pointcloud(pc, device):
+    points = torch.tensor(pc, dtype=torch.float32)
+    colors = torch.ones_like(points) * 0.8
+    pointcloud = Pointclouds(points=[points], features=[colors])
+    pointcloud = pointcloud.to(device)
+    return pointcloud
 
 def load_textured_mesh(mesh_path, device):
     verts, faces, aux = load_obj(mesh_path)

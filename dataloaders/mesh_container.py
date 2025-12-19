@@ -72,9 +72,9 @@ class MeshContainer(object):
         vy = np.array(ply_data['vertex'].data['y'])[:, np.newaxis]
         vz = np.array(ply_data['vertex'].data['z'])[:, np.newaxis]
         self.vert = np.concatenate((vx, vy, vz), axis=1)
-        self.face = ply_data['face'].data['vertex_indices'][:]
-        if (len(self.face.shape) < 2):
-            self.face = np.array([x for x in self.face])
+        # self.face = ply_data['face'].data['vertex_indices'][:]
+        # if (len(self.face.shape) < 2):
+        #     self.face = np.array([x for x in self.face])
         self.n = self.vert.shape[0]
 
     def _load_from_file_obj(self, file_path):

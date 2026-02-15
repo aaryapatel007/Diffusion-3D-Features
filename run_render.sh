@@ -15,11 +15,13 @@ VIDEO_SCRIPT="${SCRIPT_DIR}/create_video_from_frames.py"
 INPUT_FILE="${1:-data/animated_target_from_source.npy}"
 OUTPUT_DIR="${2:-output_renders}"
 FRAME_NUM="${3:-24}"
+CAMERA_DIST="${4:-4.0}"
 
 echo "=== Rendering Transferred Motion ==="
 echo "Input file: ${INPUT_FILE}"
 echo "Output directory: ${OUTPUT_DIR}"
 echo "Frame count: ${FRAME_NUM}"
+echo "Camera distance: ${CAMERA_DIST}"
 echo ""
 
 ${BLENDER_PATH} --background --python ${RENDER_SCRIPT} -- \
@@ -29,6 +31,7 @@ ${BLENDER_PATH} --background --python ${RENDER_SCRIPT} -- \
     --mode_front 1 \
     --abs \
     --marker_radius 0.02 \
+    --camera_dist ${CAMERA_DIST} \
     --resolution 512
 
 echo ""

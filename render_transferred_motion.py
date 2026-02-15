@@ -612,11 +612,14 @@ def normalize_joint_positions(joint_positions: np.ndarray) -> Tuple[np.ndarray, 
 
 
 def create_joint_markers(
-    joint_positions: np.ndarray, marker_radius: float
+    joint_positions: np.ndarray, 
+    marker_radius: float,
+    color: Optional[Tuple[float, float, float, float]] = None
 ) -> List[bpy.types.Object]:
     num_frames, num_joints, _ = joint_positions.shape
     markers: List[bpy.types.Object] = []
-    color = _get_random_color()
+    if color is None:
+        color = _get_random_color()
     for joint_idx in range(num_joints):
         bpy.ops.mesh.primitive_uv_sphere_add(
             radius=marker_radius,
@@ -637,6 +640,96 @@ def create_joint_markers(
             marker.keyframe_insert(data_path="location", frame=frame)
 
     return markers
+
+
+def create_skeleton_bones(
+    joint_positions: np.ndarray,
+    edges: np.ndarray,
+    bone_radius: float = 0.005,
+    color: Optional[Tuple[float, float, float, float]] = None
+) -> List[bpy.types.Object]:
+    """Create cylinder bones connecting joints based on edge connectivity.
+    
+    Args:
+        joint_positions: (num_frames, num_joints, 3) array of joint positions
+        edges: (num_edges, 2) array of (parent_idx, child_idx) pairs
+        bone_radius: Radius of the cylinder bones
+        color: RGBA color for bones, or None for random color
+        
+    Returns:
+        List of bone objects
+    """
+    import math
+    
+    num_frames, num_joints, _ = joint_positions.shape
+    bones: List[bpy.types.Object] = []
+    
+    if color is None:
+        color = _get_random_color()
+    
+    for edge_idx, (parent_idx, child_idx) in enumerate(edges):
+        # Create a cylinder for this bone
+        bpy.ops.mesh.primitive_cylinder_add(
+            radius=bone_radius,
+            depth=1.0,  # Will be scaled per frame
+            enter_editmode=False,
+            location=(0, 0, 0)
+        )
+        bone = bpy.context.active_object
+        bone.name = f"Bone_{edge_idx:03d}_{parent_idx}_{child_idx}"
+        _apply_color_to_object(bone, color)
+        bones.append(bone)
+    
+    # Animate bones for each frame
+    for frame_idx in range(num_frames):
+        frame = int(frame_idx)
+        
+        for edge_idx, (parent_idx, child_idx) in enumerate(edges):
+            bone = bones[edge_idx]
+            
+            # Get joint positions
+            p1 = Vector(joint_positions[frame_idx, parent_idx].tolist())
+            p2 = Vector(joint_positions[frame_idx, child_idx].tolist())
+            
+            # Compute bone properties
+            center = (p1 + p2) / 2
+            direction = p2 - p1
+            length = direction.length
+            
+            if length < 0.0001:
+                # Skip degenerate bones
+                bone.scale = (0.001, 0.001, 0.001)
+                bone.rotation_mode = 'AXIS_ANGLE'
+                bone.rotation_axis_angle = (0, 0, 0, 1)
+            else:
+                # Position at center
+                bone.location = center
+                
+                # Scale to match bone length (cylinder default depth is 2, so scale by length/2)
+                bone.scale = (1.0, 1.0, length / 2.0)
+                
+                # Rotate to point from p1 to p2
+                # Cylinder's default axis is Z
+                up = Vector((0, 0, 1))
+                bone.rotation_mode = 'AXIS_ANGLE'
+                axis = up.cross(direction.normalized())
+                if axis.length < 0.0001:
+                    # Parallel to Z axis
+                    if direction.z < 0:
+                        bone.rotation_axis_angle = (math.pi, 1, 0, 0)  # Flip around X axis
+                    else:
+                        bone.rotation_axis_angle = (0, 0, 0, 1)  # No rotation
+                else:
+                    axis = axis.normalized()
+                    angle = math.acos(max(-1, min(1, up.dot(direction.normalized()))))
+                    bone.rotation_axis_angle = (angle, axis.x, axis.y, axis.z)
+            
+            # Keyframe
+            bone.keyframe_insert(data_path="location", frame=frame)
+            bone.keyframe_insert(data_path="scale", frame=frame)
+            bone.keyframe_insert(data_path="rotation_axis_angle", frame=frame)
+    
+    return bones
 
 
 class MetadataExtractor:
@@ -912,6 +1005,10 @@ def render_joint_sequence(
     elevation: int,
     azimuth: float,
     marker_radius: float,
+    skeleton: bool = False,
+    skeleton_edges_file: Optional[str] = None,
+    bone_radius: float = 0.005,
+    camera_dist: float = 2.0,
 ) -> None:
     os.makedirs(output_dir, exist_ok=True)
 
@@ -937,7 +1034,17 @@ def render_joint_sequence(
     scene.frame_start = 0
     scene.frame_end = frame_count - 1
 
-    create_joint_markers(normalized_positions, marker_radius)
+    # Use a consistent color for both joints and bones
+    skeleton_color = _get_random_color()
+    
+    create_joint_markers(normalized_positions, marker_radius, color=skeleton_color)
+    
+    # Create skeleton bones if requested
+    if skeleton and skeleton_edges_file is not None:
+        skeleton_edges = np.load(skeleton_edges_file)
+        print(f"Creating skeleton with {len(skeleton_edges)} bones")
+        create_skeleton_bones(normalized_positions, skeleton_edges, bone_radius, color=skeleton_color)
+    
     randomize_lighting()
 
     metadata = {
@@ -952,8 +1059,8 @@ def render_joint_sequence(
     with open(metadata_path, "w", encoding="utf-8") as f:
         json.dump(metadata, f, sort_keys=True, indent=2)
 
-    camera_dist_min = 2.0
-    camera_dist_max = 2.0
+    camera_dist_min = camera_dist
+    camera_dist_max = camera_dist
 
     angle = azimuth * math.pi * 2
     direction = [math.sin(angle), math.cos(angle), 0.0]
@@ -1171,6 +1278,34 @@ if __name__ == "__main__":
         help="check for absolute joint rendering",
     )
     
+    parser.add_argument(
+        "--skeleton",
+        default=False,
+        action="store_true",
+        help="render skeleton bones (lines) connecting joints",
+    )
+    
+    parser.add_argument(
+        "--skeleton_edges_file",
+        type=str,
+        default=None,
+        help="Path to .npy file containing skeleton edges (N, 2) array of (parent_idx, child_idx)",
+    )
+    
+    parser.add_argument(
+        "--bone_radius",
+        type=float,
+        default=0.005,
+        help="Radius of the cylinder bones for skeleton rendering",
+    )
+    
+    parser.add_argument(
+        "--camera_dist",
+        type=float,
+        default=2.0,
+        help="Camera distance from the object (increase to zoom out)",
+    )
+    
     
     argv = sys.argv[sys.argv.index("--") + 1 :]
     args = parser.parse_args(argv)
@@ -1236,4 +1371,8 @@ if __name__ == "__main__":
         elevation=args.elevation / 180.0,
         azimuth=args.azimuth,
         marker_radius=args.marker_radius,
+        skeleton=args.skeleton,
+        skeleton_edges_file=args.skeleton_edges_file,
+        bone_radius=args.bone_radius,
+        camera_dist=args.camera_dist,
     )

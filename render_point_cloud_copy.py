@@ -97,9 +97,11 @@ def get_colored_depth_maps(raw_depths,H,W):
 def run_rendering(device, points, num_views, H, W, add_angle_azi=0, add_angle_ele=0, use_normal_map=False,return_images=False):
     if use_normal_map:
         # Estimate normals for the point cloud
-        # You might need to adjust the neighborhood size for your specific data
+        # Adjust neighborhood size based on point cloud size (default is 50)
         pointclouds = Pointclouds(points=[points])
-        normals = estimate_pointcloud_normals(pointclouds)[0]
+        num_points = points.shape[0]
+        neighborhood_size = min(50, max(3, num_points - 1))  # Must be < num_points and >= 3
+        normals = estimate_pointcloud_normals(pointclouds, neighborhood_size=neighborhood_size)[0]
         # Convert normals to colors by mapping from [-1, 1] to [0, 1]
         normal_colors = (normals + 1) / 2
         features = normal_colors

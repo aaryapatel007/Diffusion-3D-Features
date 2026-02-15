@@ -13,7 +13,7 @@ import numpy as np
 import argparse
 from pytorch3d.structures import Pointclouds
 
-from diff3f import get_features_per_vertex
+from diff3f_copy_copy import get_features_per_vertex
 from utils import cosine_similarity, get_colors
 from dataloaders.mesh_container import MeshContainer
 from diffusion import init_pipe
@@ -21,7 +21,18 @@ from dino import init_dino
 
 try:
     import meshplot as mp
-    MESHPLOT_AVAILABLE = True
+    # Check if running in Jupyter notebook
+    def _in_notebook():
+        try:
+            from IPython import get_ipython
+            if get_ipython() is None:
+                return False
+            if 'IPKernelApp' not in get_ipython().config:
+                return False
+            return True
+        except:
+            return False
+    MESHPLOT_AVAILABLE = _in_notebook()  # Only use meshplot in notebooks
 except ImportError:
     MESHPLOT_AVAILABLE = False
 
@@ -243,7 +254,8 @@ def main():
     parser = argparse.ArgumentParser(description="Compute correspondence between two 3D point clouds")
     parser.add_argument("--source", type=str, required=True, help="Path to source point cloud (PLY/OBJ/NPY)")
     parser.add_argument("--target", type=str, required=True, help="Path to target point cloud (PLY/OBJ/NPY)")
-    parser.add_argument("--prompt", type=str, required=True, help="Text prompt describing the object")
+    parser.add_argument("--prompt_source", type=str, required=True, help="Text prompt describing the source object")
+    parser.add_argument("--prompt_target", type=str, required=True, help="Text prompt describing the target object")
     parser.add_argument("--output", type=str, default="correspondence.npy", help="Output file for correspondence")
     parser.add_argument("--num_views", type=int, default=100, help="Number of rendered views")
     parser.add_argument("--device", type=str, default="cuda:0", help="CUDA device")
@@ -268,12 +280,12 @@ def main():
     print(f"  Target has {len(target_pc.vert)} points")
     
     print("Computing source features...")
-    f_source = compute_features(device, pipe, dino_model, source_pc, args.prompt, 
+    f_source = compute_features(device, pipe, dino_model, source_pc, args.prompt_source, 
                                  num_views=args.num_views)
     print(f"  Source features shape: {f_source.shape}")
     
     print("Computing target features...")
-    f_target = compute_features(device, pipe, dino_model, target_pc, args.prompt,
+    f_target = compute_features(device, pipe, dino_model, target_pc, args.prompt_target,
                                  num_views=args.num_views)
     print(f"  Target features shape: {f_target.shape}")
     
